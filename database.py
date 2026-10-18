@@ -1,0 +1,427 @@
+"""
+SQLite Database module for persistent storage of subjects, tasks, student preferences, and schedules.
+Also supplies initial demonstration datasets for engineering coursework.
+"""
+
+import sqlite3
+import json
+import os
+from typing import List, Dict, Optional, Any
+from datetime import date, timedelta
+from models import Subject, Task, StudentProfile, Difficulty, Importance
+
+DB_PATH = "student_optimizer.db"
+
+class Database:
+    def __init__(self, db_path: str = DB_PATH):
+        self.db_path = db_path
+        self._init_tables()
+        self._ensure_seed_data()
+
+    def _get_connection(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _init_tables(self):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            # Subjects table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS subjects (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    code TEXT NOT NULL,
+                    credits INTEGER NOT NULL,
+                    difficulty TEXT NOT NULL,
+                    importance INTEGER NOT NULL,
+                    deadline TEXT NOT NULL,
+                    color TEXT NOT NULL,
+                    completion_percentage REAL DEFAULT 0.0,
+                    estimated_remaining_hours REAL DEFAULT 0.0,
+                    prerequisite_subject_ids TEXT DEFAULT '[]'
+                )
+            """)
+
+            # Tasks table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS tasks (
+                    id TEXT PRIMARY KEY,
+                    subject_id TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    duration_hours REAL NOT NULL,
+                    deadline TEXT NOT NULL,
+                    task_type TEXT NOT NULL,
+                    difficulty TEXT NOT NULL,
+                    importance INTEGER NOT NULL,
+                    completion_pct REAL DEFAULT 0.0,
+                    prerequisite_task_ids TEXT DEFAULT '[]',
+                    preferred_period TEXT,
+                    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+                )
+            """)
+
+            # Student profile table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS student_profile (
+                    student_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    daily_available_hours TEXT NOT NULL,
+                    preferred_study_periods TEXT NOT NULL,
+                    break_duration_minutes INTEGER DEFAULT 15,
+                    max_continuous_study_hours REAL DEFAULT 2.5,
+                    fixed_commitments TEXT DEFAULT '[]'
+                )
+            """)
+
+            conn.commit()
+
+    def _ensure_seed_data(self):
+        """Populates rich demonstration dataset if database is empty."""
+        subjects = self.get_all_subjects()
+        if not subjects:
+            self.load_sample_dataset()
+
+    def load_sample_dataset(self):
+        """
+        Loads the required demonstration dataset:
+        - Computer Networks
+        - Artificial Intelligence
+        - Database Management Systems
+        - Data Structures and Algorithms
+        """
+        today = date.today()
+
+        sample_subjects = [
+            Subject(
+                id="subj_dsa",
+                name="Data Structures and Algorithms",
+                code="CS-201",
+                credits=4,
+                difficulty=Difficulty.HARD,
+                importance=5,
+                deadline=(today + timedelta(days=6)).isoformat(),
+                color="#EF4444",
+                completion_percentage=60.0,
+                estimated_remaining_hours=8.0,
+                prerequisite_subject_ids=[],
+                tasks=[
+                    Task(
+                        id="task_dsa_1",
+                        subject_id="subj_dsa",
+                        name="Graph Algorithms & Dijkstra",
+                        duration_hours=3.0,
+                        deadline=(today + timedelta(days=4)).isoformat(),
+                        task_type="Theory",
+                        difficulty=Difficulty.HARD,
+                        importance=5,
+                        completion_pct=75.0,
+                        prerequisite_task_ids=[]
+                    ),
+                    Task(
+                        id="task_dsa_2",
+                        subject_id="subj_dsa",
+                        name="Dynamic Programming Problem Set",
+                        duration_hours=4.0,
+                        deadline=(today + timedelta(days=5)).isoformat(),
+                        task_type="Problem Set",
+                        difficulty=Difficulty.HARD,
+                        importance=5,
+                        completion_pct=40.0,
+                        prerequisite_task_ids=["task_dsa_1"]
+                    ),
+                    Task(
+                        id="task_dsa_3",
+                        subject_id="subj_dsa",
+                        name="B-Trees & Advanced Balanced Trees",
+                        duration_hours=2.5,
+                        deadline=(today + timedelta(days=6)).isoformat(),
+                        task_type="Theory",
+                        difficulty=Difficulty.MEDIUM,
+                        importance=4,
+                        completion_pct=30.0,
+                        prerequisite_task_ids=[]
+                    )
+                ]
+            ),
+            Subject(
+                id="subj_ai",
+                name="Artificial Intelligence",
+                code="CS-301",
+                credits=4,
+                difficulty=Difficulty.HARD,
+                importance=5,
+                deadline=(today + timedelta(days=7)).isoformat(),
+                color="#8B5CF6",
+                completion_percentage=45.0,
+                estimated_remaining_hours=9.5,
+                prerequisite_subject_ids=["subj_dsa"],
+                tasks=[
+                    Task(
+                        id="task_ai_1",
+                        subject_id="subj_ai",
+                        name="A* Search & Admissible Heuristics",
+                        duration_hours=3.0,
+                        deadline=(today + timedelta(days=5)).isoformat(),
+                        task_type="Theory",
+                        difficulty=Difficulty.MEDIUM,
+                        importance=5,
+                        completion_pct=80.0,
+                        prerequisite_task_ids=["task_dsa_1"]  # Graph traversal is prereq
+                    ),
+                    Task(
+                        id="task_ai_2",
+                        subject_id="subj_ai",
+                        name="CSP Backtracking & MRV Implementation",
+                        duration_hours=3.5,
+                        deadline=(today + timedelta(days=6)).isoformat(),
+                        task_type="Lab",
+                        difficulty=Difficulty.HARD,
+                        importance=4,
+                        completion_pct=30.0,
+                        prerequisite_task_ids=["task_ai_1"]
+                    ),
+                    Task(
+                        id="task_ai_3",
+                        subject_id="subj_ai",
+                        name="Bayesian Networks & Variable Elimination",
+                        duration_hours=4.0,
+                        deadline=(today + timedelta(days=7)).isoformat(),
+                        task_type="Theory",
+                        difficulty=Difficulty.HARD,
+                        importance=5,
+                        completion_pct=25.0,
+                        prerequisite_task_ids=[]
+                    )
+                ]
+            ),
+            Subject(
+                id="subj_dbms",
+                name="Database Management Systems",
+                code="CS-204",
+                credits=3,
+                difficulty=Difficulty.MEDIUM,
+                importance=4,
+                deadline=(today + timedelta(days=9)).isoformat(),
+                color="#10B981",
+                completion_percentage=70.0,
+                estimated_remaining_hours=5.5,
+                prerequisite_subject_ids=["subj_dsa"],
+                tasks=[
+                    Task(
+                        id="task_dbms_1",
+                        subject_id="subj_dbms",
+                        name="Relational Algebra & Normalization (BCNF)",
+                        duration_hours=2.5,
+                        deadline=(today + timedelta(days=7)).isoformat(),
+                        task_type="Theory",
+                        difficulty=Difficulty.MEDIUM,
+                        importance=4,
+                        completion_pct=90.0,
+                        prerequisite_task_ids=[]
+                    ),
+                    Task(
+                        id="task_dbms_2",
+                        subject_id="subj_dbms",
+                        name="Query Optimization & Indexing",
+                        duration_hours=3.5,
+                        deadline=(today + timedelta(days=9)).isoformat(),
+                        task_type="Problem Set",
+                        difficulty=Difficulty.HARD,
+                        importance=4,
+                        completion_pct=40.0,
+                        prerequisite_task_ids=["task_dsa_3", "task_dbms_1"]
+                    )
+                ]
+            ),
+            Subject(
+                id="subj_cn",
+                name="Computer Networks",
+                code="CS-302",
+                credits=4,
+                difficulty=Difficulty.MEDIUM,
+                importance=4,
+                deadline=(today + timedelta(days=8)).isoformat(),
+                color="#0284C7",
+                completion_percentage=50.0,
+                estimated_remaining_hours=6.5,
+                prerequisite_subject_ids=[],
+                tasks=[
+                    Task(
+                        id="task_cn_1",
+                        subject_id="subj_cn",
+                        name="TCP/IP Layer Architecture & Flow Control",
+                        duration_hours=3.0,
+                        deadline=(today + timedelta(days=6)).isoformat(),
+                        task_type="Theory",
+                        difficulty=Difficulty.MEDIUM,
+                        importance=4,
+                        completion_pct=60.0,
+                        prerequisite_task_ids=[]
+                    ),
+                    Task(
+                        id="task_cn_2",
+                        subject_id="subj_cn",
+                        name="Socket Programming & Wireshark Lab",
+                        duration_hours=4.0,
+                        deadline=(today + timedelta(days=8)).isoformat(),
+                        task_type="Lab",
+                        difficulty=Difficulty.HARD,
+                        importance=5,
+                        completion_pct=35.0,
+                        prerequisite_task_ids=["task_cn_1"]
+                    )
+                ]
+            )
+        ]
+
+        # Clear existing
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM tasks")
+            cursor.execute("DELETE FROM subjects")
+            conn.commit()
+
+        for s in sample_subjects:
+            self.save_subject(s)
+
+        # Default student profile
+        default_profile = StudentProfile(
+            student_id="default_student",
+            name="Alex Mercer (3rd Year Computer Engineering)",
+            daily_available_hours={
+                "Monday": 4.5,
+                "Tuesday": 4.0,
+                "Wednesday": 4.5,
+                "Thursday": 5.0,
+                "Friday": 3.5,
+                "Saturday": 6.5,
+                "Sunday": 6.0
+            },
+            preferred_study_periods=["Morning", "Evening"],
+            break_duration_minutes=15,
+            max_continuous_study_hours=2.5,
+            fixed_commitments=[]
+        )
+        self.save_student_profile(default_profile)
+
+    def get_all_subjects(self) -> List[Subject]:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM subjects")
+            sub_rows = cursor.fetchall()
+            subjects: List[Subject] = []
+
+            for r in sub_rows:
+                cursor.execute("SELECT * FROM tasks WHERE subject_id = ?", (r["id"],))
+                task_rows = cursor.fetchall()
+                tasks: List[Task] = []
+                for tr in task_rows:
+                    tasks.append(Task(
+                        id=tr["id"],
+                        subject_id=tr["subject_id"],
+                        name=tr["name"],
+                        duration_hours=tr["duration_hours"],
+                        deadline=tr["deadline"],
+                        task_type=tr["task_type"],
+                        difficulty=tr["difficulty"],
+                        importance=tr["importance"],
+                        completion_pct=tr["completion_pct"],
+                        prerequisite_task_ids=json.loads(tr["prerequisite_task_ids"] or "[]"),
+                        preferred_period=tr["preferred_period"]
+                    ))
+
+                subjects.append(Subject(
+                    id=r["id"],
+                    name=r["name"],
+                    code=r["code"],
+                    credits=r["credits"],
+                    difficulty=r["difficulty"],
+                    importance=r["importance"],
+                    deadline=r["deadline"],
+                    color=r["color"],
+                    completion_percentage=r["completion_percentage"],
+                    estimated_remaining_hours=r["estimated_remaining_hours"],
+                    prerequisite_subject_ids=json.loads(r["prerequisite_subject_ids"] or "[]"),
+                    tasks=tasks
+                ))
+
+            return subjects
+
+    def save_subject(self, subject: Subject):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO subjects (
+                    id, name, code, credits, difficulty, importance,
+                    deadline, color, completion_percentage, estimated_remaining_hours,
+                    prerequisite_subject_ids
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                subject.id, subject.name, subject.code, subject.credits,
+                subject.difficulty, subject.importance, subject.deadline,
+                subject.color, subject.completion_percentage,
+                subject.estimated_remaining_hours,
+                json.dumps(subject.prerequisite_subject_ids)
+            ))
+
+            # Delete old tasks for this subject and re-insert
+            cursor.execute("DELETE FROM tasks WHERE subject_id = ?", (subject.id,))
+            for t in subject.tasks:
+                cursor.execute("""
+                    INSERT INTO tasks (
+                        id, subject_id, name, duration_hours, deadline,
+                        task_type, difficulty, importance, completion_pct,
+                        prerequisite_task_ids, preferred_period
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    t.id, t.subject_id, t.name, t.duration_hours, t.deadline,
+                    t.task_type, t.difficulty, t.importance, t.completion_pct,
+                    json.dumps(t.prerequisite_task_ids), t.preferred_period
+                ))
+            conn.commit()
+
+    def delete_subject(self, subject_id: str):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM tasks WHERE subject_id = ?", (subject_id,))
+            cursor.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
+            conn.commit()
+
+    def get_student_profile(self) -> StudentProfile:
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM student_profile WHERE student_id = 'default_student'")
+            row = cursor.fetchone()
+            if not row:
+                return StudentProfile("default_student", "Alex Mercer")
+
+            return StudentProfile(
+                student_id=row["student_id"],
+                name=row["name"],
+                daily_available_hours=json.loads(row["daily_available_hours"]),
+                preferred_study_periods=json.loads(row["preferred_study_periods"]),
+                break_duration_minutes=row["break_duration_minutes"],
+                max_continuous_study_hours=row["max_continuous_study_hours"],
+                fixed_commitments=[]
+            )
+
+    def save_student_profile(self, profile: StudentProfile):
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO student_profile (
+                    student_id, name, daily_available_hours,
+                    preferred_study_periods, break_duration_minutes,
+                    max_continuous_study_hours, fixed_commitments
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (
+                profile.student_id,
+                profile.name,
+                json.dumps(profile.daily_available_hours),
+                json.dumps(profile.preferred_study_periods),
+                profile.break_duration_minutes,
+                profile.max_continuous_study_hours,
+                json.dumps([c.__dict__ for c in profile.fixed_commitments])
+            ))
+            conn.commit()

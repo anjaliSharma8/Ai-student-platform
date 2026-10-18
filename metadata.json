@@ -1,0 +1,6 @@
+{
+  "name": "AI Engineering Student Performance Optimizer",
+  "description": "Holistic academic workload optimization using A* search, constraint satisfaction (CSP), topological AI planning, and Bayesian network risk inference.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
