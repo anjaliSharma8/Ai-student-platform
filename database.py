@@ -1,16 +1,19 @@
+
 """
-SQLite Database module for persistent storage of subjects, tasks, student preferences, and schedules.
-Also supplies initial demonstration datasets for engineering coursework.
+SQLite Database module for persistent storage of subjects, tasks,
+student preferences, and schedules.
 """
 
 import sqlite3
 import json
-import os
-from typing import List, Dict, Optional, Any
+from contextlib import contextmanager
+from typing import List
 from datetime import date, timedelta
+
 from models import Subject, Task, StudentProfile, Difficulty, Importance
 
 DB_PATH = "student_optimizer.db"
+
 
 class Database:
     def __init__(self, db_path: str = DB_PATH):
@@ -18,16 +21,23 @@ class Database:
         self._init_tables()
         self._ensure_seed_data()
 
-    def _get_connection(self) -> sqlite3.Connection:
+    @contextmanager
+    def _get_connection(self):
+        """Open a connection and always close it after use."""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _init_tables(self):
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            # Subjects table
-            cursor.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS subjects (
                     id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -43,8 +53,7 @@ class Database:
                 )
             """)
 
-            # Tasks table
-            cursor.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS tasks (
                     id TEXT PRIMARY KEY,
                     subject_id TEXT NOT NULL,
@@ -57,12 +66,12 @@ class Database:
                     completion_pct REAL DEFAULT 0.0,
                     prerequisite_task_ids TEXT DEFAULT '[]',
                     preferred_period TEXT,
-                    FOREIGN KEY (subject_id) REFERENCES subjects(id) ON DELETE CASCADE
+                    FOREIGN KEY (subject_id)
+                        REFERENCES subjects(id) ON DELETE CASCADE
                 )
             """)
 
-            # Student profile table
-            cursor.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS student_profile (
                     student_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -74,22 +83,12 @@ class Database:
                 )
             """)
 
-            conn.commit()
-
     def _ensure_seed_data(self):
-        """Populates rich demonstration dataset if database is empty."""
-        subjects = self.get_all_subjects()
-        if not subjects:
+        if not self.get_all_subjects():
             self.load_sample_dataset()
 
     def load_sample_dataset(self):
-        """
-        Loads the required demonstration dataset:
-        - Computer Networks
-        - Artificial Intelligence
-        - Database Management Systems
-        - Data Structures and Algorithms
-        """
+        """Load four demonstration subjects and their tasks."""
         today = date.today()
 
         sample_subjects = [
@@ -167,7 +166,7 @@ class Database:
                         difficulty=Difficulty.MEDIUM,
                         importance=5,
                         completion_pct=80.0,
-                        prerequisite_task_ids=["task_dsa_1"]  # Graph traversal is prereq
+                        prerequisite_task_ids=["task_dsa_1"]
                     ),
                     Task(
                         id="task_ai_2",
@@ -230,7 +229,10 @@ class Database:
                         difficulty=Difficulty.HARD,
                         importance=4,
                         completion_pct=40.0,
-                        prerequisite_task_ids=["task_dsa_3", "task_dbms_1"]
+                        prerequisite_task_ids=[
+                            "task_dsa_3",
+                            "task_dbms_1"
+                        ]
                     )
                 ]
             ),
@@ -275,17 +277,13 @@ class Database:
             )
         ]
 
-        # Clear existing
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM tasks")
-            cursor.execute("DELETE FROM subjects")
-            conn.commit()
+            conn.execute("DELETE FROM tasks")
+            conn.execute("DELETE FROM subjects")
 
-        for s in sample_subjects:
-            self.save_subject(s)
+        for subject in sample_subjects:
+            self.save_subject(subject)
 
-        # Default student profile
         default_profile = StudentProfile(
             student_id="default_student",
             name="Alex Mercer (3rd Year Computer Engineering)",
@@ -307,109 +305,153 @@ class Database:
 
     def get_all_subjects(self) -> List[Subject]:
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM subjects")
-            sub_rows = cursor.fetchall()
-            subjects: List[Subject] = []
+            rows = conn.execute(
+                "SELECT * FROM subjects"
+            ).fetchall()
 
-            for r in sub_rows:
-                cursor.execute("SELECT * FROM tasks WHERE subject_id = ?", (r["id"],))
-                task_rows = cursor.fetchall()
-                tasks: List[Task] = []
-                for tr in task_rows:
-                    tasks.append(Task(
-                        id=tr["id"],
-                        subject_id=tr["subject_id"],
-                        name=tr["name"],
-                        duration_hours=tr["duration_hours"],
-                        deadline=tr["deadline"],
-                        task_type=tr["task_type"],
-                        difficulty=tr["difficulty"],
-                        importance=tr["importance"],
-                        completion_pct=tr["completion_pct"],
-                        prerequisite_task_ids=json.loads(tr["prerequisite_task_ids"] or "[]"),
-                        preferred_period=tr["preferred_period"]
-                    ))
+            subjects = []
 
-                subjects.append(Subject(
-                    id=r["id"],
-                    name=r["name"],
-                    code=r["code"],
-                    credits=r["credits"],
-                    difficulty=r["difficulty"],
-                    importance=r["importance"],
-                    deadline=r["deadline"],
-                    color=r["color"],
-                    completion_percentage=r["completion_percentage"],
-                    estimated_remaining_hours=r["estimated_remaining_hours"],
-                    prerequisite_subject_ids=json.loads(r["prerequisite_subject_ids"] or "[]"),
-                    tasks=tasks
-                ))
+            for row in rows:
+                task_rows = conn.execute(
+                    "SELECT * FROM tasks WHERE subject_id = ?",
+                    (row["id"],)
+                ).fetchall()
+
+                tasks = [
+                    Task(
+                        id=task["id"],
+                        subject_id=task["subject_id"],
+                        name=task["name"],
+                        duration_hours=task["duration_hours"],
+                        deadline=task["deadline"],
+                        task_type=task["task_type"],
+                        difficulty=task["difficulty"],
+                        importance=task["importance"],
+                        completion_pct=task["completion_pct"],
+                        prerequisite_task_ids=json.loads(
+                            task["prerequisite_task_ids"] or "[]"
+                        ),
+                        preferred_period=task["preferred_period"]
+                    )
+                    for task in task_rows
+                ]
+
+                subjects.append(
+                    Subject(
+                        id=row["id"],
+                        name=row["name"],
+                        code=row["code"],
+                        credits=row["credits"],
+                        difficulty=row["difficulty"],
+                        importance=row["importance"],
+                        deadline=row["deadline"],
+                        color=row["color"],
+                        completion_percentage=row["completion_percentage"],
+                        estimated_remaining_hours=row[
+                            "estimated_remaining_hours"
+                        ],
+                        prerequisite_subject_ids=json.loads(
+                            row["prerequisite_subject_ids"] or "[]"
+                        ),
+                        tasks=tasks
+                    )
+                )
 
             return subjects
 
     def save_subject(self, subject: Subject):
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+            conn.execute("""
                 INSERT OR REPLACE INTO subjects (
                     id, name, code, credits, difficulty, importance,
-                    deadline, color, completion_percentage, estimated_remaining_hours,
-                    prerequisite_subject_ids
+                    deadline, color, completion_percentage,
+                    estimated_remaining_hours, prerequisite_subject_ids
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
-                subject.id, subject.name, subject.code, subject.credits,
-                subject.difficulty, subject.importance, subject.deadline,
-                subject.color, subject.completion_percentage,
+                subject.id,
+                subject.name,
+                subject.code,
+                subject.credits,
+                subject.difficulty,
+                subject.importance,
+                subject.deadline,
+                subject.color,
+                subject.completion_percentage,
                 subject.estimated_remaining_hours,
                 json.dumps(subject.prerequisite_subject_ids)
             ))
 
-            # Delete old tasks for this subject and re-insert
-            cursor.execute("DELETE FROM tasks WHERE subject_id = ?", (subject.id,))
-            for t in subject.tasks:
-                cursor.execute("""
+            conn.execute(
+                "DELETE FROM tasks WHERE subject_id = ?",
+                (subject.id,)
+            )
+
+            for task in subject.tasks:
+                conn.execute("""
                     INSERT INTO tasks (
                         id, subject_id, name, duration_hours, deadline,
                         task_type, difficulty, importance, completion_pct,
                         prerequisite_task_ids, preferred_period
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    t.id, t.subject_id, t.name, t.duration_hours, t.deadline,
-                    t.task_type, t.difficulty, t.importance, t.completion_pct,
-                    json.dumps(t.prerequisite_task_ids), t.preferred_period
+                    task.id,
+                    task.subject_id,
+                    task.name,
+                    task.duration_hours,
+                    task.deadline,
+                    task.task_type,
+                    task.difficulty,
+                    task.importance,
+                    task.completion_pct,
+                    json.dumps(task.prerequisite_task_ids),
+                    task.preferred_period
                 ))
-            conn.commit()
 
     def delete_subject(self, subject_id: str):
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM tasks WHERE subject_id = ?", (subject_id,))
-            cursor.execute("DELETE FROM subjects WHERE id = ?", (subject_id,))
-            conn.commit()
+            conn.execute(
+                "DELETE FROM tasks WHERE subject_id = ?",
+                (subject_id,)
+            )
+            conn.execute(
+                "DELETE FROM subjects WHERE id = ?",
+                (subject_id,)
+            )
 
     def get_student_profile(self) -> StudentProfile:
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM student_profile WHERE student_id = 'default_student'")
-            row = cursor.fetchone()
+            row = conn.execute("""
+                SELECT * FROM student_profile
+                WHERE student_id = 'default_student'
+            """).fetchone()
+
             if not row:
-                return StudentProfile("default_student", "Alex Mercer")
+                return StudentProfile(
+                    "default_student",
+                    "Alex Mercer"
+                )
 
             return StudentProfile(
                 student_id=row["student_id"],
                 name=row["name"],
-                daily_available_hours=json.loads(row["daily_available_hours"]),
-                preferred_study_periods=json.loads(row["preferred_study_periods"]),
+                daily_available_hours=json.loads(
+                    row["daily_available_hours"]
+                ),
+                preferred_study_periods=json.loads(
+                    row["preferred_study_periods"]
+                ),
                 break_duration_minutes=row["break_duration_minutes"],
-                max_continuous_study_hours=row["max_continuous_study_hours"],
-                fixed_commitments=[]
+                max_continuous_study_hours=row[
+                    "max_continuous_study_hours"
+                ],
+                fixed_commitments=json.loads(
+                    row["fixed_commitments"] or "[]"
+                )
             )
 
     def save_student_profile(self, profile: StudentProfile):
         with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+            conn.execute("""
                 INSERT OR REPLACE INTO student_profile (
                     student_id, name, daily_available_hours,
                     preferred_study_periods, break_duration_minutes,
@@ -422,6 +464,8 @@ class Database:
                 json.dumps(profile.preferred_study_periods),
                 profile.break_duration_minutes,
                 profile.max_continuous_study_hours,
-                json.dumps([c.__dict__ for c in profile.fixed_commitments])
+                json.dumps([
+                    item.__dict__ if hasattr(item, "__dict__") else item
+                    for item in profile.fixed_commitments
+                ])
             ))
-            conn.commit()
